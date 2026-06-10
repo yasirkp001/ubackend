@@ -729,6 +729,75 @@ router.put('/users/:id', (req, res) => {
     }
 });
 
+// 17.55. Delete a customer account
+router.delete('/users/:id', (req, res) => {
+    try {
+        const userId = parseInt(req.params.id, 10);
+        const index = store.users.findIndex(u => u.id === userId);
+
+        if (index === -1) {
+            return res.status(404).json({ message: 'User not found.' });
+        }
+        if (userId === req.user.id) {
+            return res.status(400).json({ message: 'You cannot delete your own account.' });
+        }
+        if (store.users[index].role === 'admin') {
+            return res.status(400).json({ message: 'Administrator accounts cannot be deleted from here.' });
+        }
+
+        const removed = store.users.splice(index, 1)[0];
+
+        // Clean up the deleted customer's cart (order history is kept for records)
+        for (let i = store.cart_items.length - 1; i >= 0; i--) {
+            if (store.cart_items[i].user_id === userId) store.cart_items.splice(i, 1);
+        }
+
+        store.logActivity(req.user.id, 'Customer Deleted', `Customer "${removed.name}" (${removed.email}) was permanently deleted.`);
+        res.json({ message: 'Customer deleted successfully.' });
+    } catch (err) {
+        res.status(500).json({ message: 'Server error.', error: err.message });
+    }
+});
+
+// 17.56. View live customer carts (potential revenue not yet checked out)
+router.get('/carts', (req, res) => {
+    try {
+        const cartsByUser = {};
+        store.cart_items.forEach(c => {
+            const user = store.users.find(u => u.id === c.user_id);
+            if (!user) return;
+            const product = store.products.find(p => p.id === c.product_id);
+            if (!cartsByUser[c.user_id]) {
+                cartsByUser[c.user_id] = {
+                    user_id: c.user_id,
+                    name: user.name,
+                    email: user.email,
+                    dp: user.dp || '',
+                    items: [],
+                    item_count: 0,
+                    total_value: 0
+                };
+            }
+            const price = product ? parseFloat(product.price) || 0 : 0;
+            cartsByUser[c.user_id].items.push({
+                product_id: c.product_id,
+                name: product ? product.name : 'Unknown Product',
+                image: product ? product.image : '',
+                size: c.size,
+                quantity: c.quantity,
+                price
+            });
+            cartsByUser[c.user_id].item_count += c.quantity;
+            cartsByUser[c.user_id].total_value += price * c.quantity;
+        });
+
+        const carts = Object.values(cartsByUser).sort((a, b) => b.total_value - a.total_value);
+        res.json(carts);
+    } catch (err) {
+        res.status(500).json({ message: 'Server error.', error: err.message });
+    }
+});
+
 // 17.6. Change own admin password
 router.put('/change-password', async (req, res) => {
     try {
