@@ -756,6 +756,29 @@ router.put('/change-password', async (req, res) => {
         user.password_hash = await bcrypt.hash(new_password, salt);
 
         store.logActivity(req.user.id, 'Password Changed', 'Admin account password was changed.');
+        
+        // Save to backend live activities store
+        store.addLiveActivity(
+            'password-changed',
+            'Admin Password Changed',
+            `Administrator ${user.name} (${user.email}) changed their password.`,
+            '#f43f5e',
+            '🔒'
+        );
+
+        // Broadcast real-time SSE password change notification
+        try {
+            const sseService = require('../services/sseService');
+            sseService.broadcast('password-changed', {
+                name: user.name,
+                email: user.email,
+                role: 'admin',
+                time: new Date().toISOString()
+            });
+        } catch (sseErr) {
+            console.error('Failed to broadcast password-changed via SSE:', sseErr.message);
+        }
+
         res.json({ message: 'Password changed successfully.' });
     } catch (err) {
         res.status(500).json({ message: 'Server error.', error: err.message });
@@ -782,6 +805,15 @@ router.put('/orders/:id/notes', (req, res) => {
 router.get('/activity', (req, res) => {
     try {
         res.json(store.activities);
+    } catch (err) {
+        res.status(500).json({ message: 'Server error.', error: err.message });
+    }
+});
+
+// 17.9. Get backend live activities log
+router.get('/live-activities', (req, res) => {
+    try {
+        res.json(store.live_activities);
     } catch (err) {
         res.status(500).json({ message: 'Server error.', error: err.message });
     }

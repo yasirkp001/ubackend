@@ -10,6 +10,7 @@ const support_tickets = [];
 const categories = [];
 const size_guides = [];
 const activities = [];
+const live_activities = [];
 
 // Record an admin action in the activity log (most recent first, capped at 300)
 let nextActivityId = 1;
@@ -24,6 +25,23 @@ function logActivity(actorId, action, detail) {
         created_at: new Date().toISOString()
     });
     if (activities.length > 300) activities.length = 300;
+}
+
+let nextLiveActivityId = 1;
+function addLiveActivity(type, name, message, color, icon, idRef = null) {
+    const activity = {
+        id: `live-${nextLiveActivityId++}-${Date.now()}`,
+        type,
+        idRef,
+        name,
+        message,
+        time: new Date().toISOString(),
+        color,
+        icon
+    };
+    live_activities.unshift(activity);
+    if (live_activities.length > 200) live_activities.length = 200;
+    return activity;
 }
 const site_settings = {
     site_name: 'Uclose Co.',
@@ -332,6 +350,17 @@ async function initStore() {
         ]
     });
     console.log('[In-Memory Store] Seeded default size guides.');
+    
+    // Seed initial live activities
+    live_activities.push({
+        id: 'live-seed-1',
+        type: 'system',
+        name: 'System Initialized',
+        message: 'Uclose e-commerce platform started successfully.',
+        time: new Date().toISOString(),
+        color: '#10b981',
+        icon: '⚡'
+    });
 }
 
 initStore();
@@ -348,5 +377,7 @@ module.exports = {
     site_settings,
     reviews,
     activities,
-    logActivity
+    logActivity,
+    live_activities,
+    addLiveActivity
 };

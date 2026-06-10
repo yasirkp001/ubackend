@@ -79,10 +79,22 @@ router.post('/', (req, res) => {
     try {
         const user = store.users.find(u => u.id === userId) || {};
         const parsedItems = Array.isArray(items) ? items : JSON.parse(items);
+        const customerName = user.name || `${shippingDetails.firstName || ''} ${shippingDetails.lastName || ''}`.trim() || 'Guest Customer';
+        
+        // Save to backend live activities store
+        store.addLiveActivity(
+            'new-order',
+            'New Order Placed',
+            `Order #${id} placed by ${customerName} for $${parseFloat(total || 0).toFixed(2)}`,
+            '#3b82f6',
+            '🛒',
+            id
+        );
+
         sseService.broadcast('new-order', {
             id,
             total,
-            customerName: user.name || `${shippingDetails.firstName || ''} ${shippingDetails.lastName || ''}`.trim() || 'Guest Customer',
+            customerName,
             itemsCount: parsedItems.length
         });
     } catch (sseErr) {

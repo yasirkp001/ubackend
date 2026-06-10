@@ -22,6 +22,16 @@ router.post('/tickets', (req, res) => {
     };
     store.support_tickets.push(ticket);
 
+    // Save to backend live activities store
+    store.addLiveActivity(
+        'ticket-created',
+        'New Support Inquiry',
+        `Ticket #${nextId} opened by ${ticket.name} (${ticket.email}).`,
+        '#f59e0b',
+        '💬',
+        nextId
+    );
+
     // Broadcast real-time SSE ticket creation
     const sseService = require('../services/sseService');
     sseService.broadcast('ticket-created', { id: nextId, name: ticket.name, email: ticket.email, time: ticket.created_at });
