@@ -3,6 +3,7 @@ const router = express.Router();
 const store = require('../store');
 const authMiddleware = require('../middleware/auth');
 const adminMiddleware = require('../middleware/admin');
+const sseService = require('../services/sseService');
 const emailService = require('../services/emailService');
 const multer = require('multer');
 const path = require('path');
@@ -84,8 +85,7 @@ router.get('/stats', (req, res) => {
 // 2. List all users with LTV stats
 router.get('/users', (req, res) => {
     try {
-        const customers = store.users
-            .filter(u => u.role === 'customer')
+        const usersList = store.users
             .map(u => {
                 const userOrders = store.orders.filter(o => o.user_id === u.id);
                 const order_count = userOrders.length;
@@ -96,18 +96,97 @@ router.get('/users', (req, res) => {
                     email: u.email,
                     role: u.role,
                     phone: u.phone || '',
+                    dp: u.dp || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(u.name || 'User')}`,
                     created_at: u.created_at,
                     is_active: u.is_active,
-                    order_count,
-                    lifetime_value
+                    order_count: u.role === 'admin' ? null : order_count,
+                    lifetime_value: u.role === 'admin' ? null : lifetime_value
                 };
             })
             .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-        res.json(customers);
+        res.json(usersList);
     } catch (err) {
         res.status(500).json({ message: 'Server error.', error: err.message });
     }
 });
+
+// 2.5. Create a new Administrator
+router.post('/users/create-admin', async (req, res) => {
+    try {
+        const { name, email, password, phone, dp } = req.body;
+
+        if (!name || !email || !password) {
+            return res.status(400).json({ message: 'Name, email, and password are required.' });
+        }
+
+        const existingUser = store.users.find(u => u.email.toLowerCase() === email.toLowerCase());
+        if (existingUser) {
+            return res.status(400).json({ message: 'A user or admin already exists with this email.' });
+        }
+
+        const bcrypt = require('bcryptjs');
+        const salt = await bcrypt.genSalt(10);
+        const passwordHash = await bcrypt.hash(password, salt);
+
+        const newUserId = store.users.length > 0 ? Math.max(...store.users.map(u => u.id)) + 1 : 1;
+        const newAdmin = {
+            id: newUserId,
+            name: name.trim(),
+            email: email.toLowerCase().trim(),
+            password_hash: passwordHash,
+            role: 'admin',
+            phone: phone || '',
+            dp: dp || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name || 'Admin')}`,
+            created_at: new Date().toISOString(),
+            is_active: 1
+        };
+
+        store.users.push(newAdmin);
+        res.status(201).json({ message: 'Administrator created successfully.', user: { id: newAdmin.id, name: newAdmin.name, email: newAdmin.email, role: newAdmin.role } });
+    } catch (err) {
+        res.status(500).json({ message: 'Server error.', error: err.message });
+    }
+});
+
+// 2.7. Create a new Customer / User
+router.post('/users/create-customer', async (req, res) => {
+    try {
+        const { name, email, password, phone, dp } = req.body;
+
+        if (!name || !email || !password) {
+            return res.status(400).json({ message: 'Name, email, and password are required.' });
+        }
+
+        const existingUser = store.users.find(u => u.email.toLowerCase() === email.toLowerCase());
+        if (existingUser) {
+            return res.status(400).json({ message: 'A user already exists with this email.' });
+        }
+
+        const bcrypt = require('bcryptjs');
+        const salt = await bcrypt.genSalt(10);
+        const passwordHash = await bcrypt.hash(password, salt);
+
+        const newUserId = store.users.length > 0 ? Math.max(...store.users.map(u => u.id)) + 1 : 1;
+        const newCustomer = {
+            id: newUserId,
+            name: name.trim(),
+            email: email.toLowerCase().trim(),
+            password_hash: passwordHash,
+            role: 'customer',
+            phone: phone || '',
+            dp: dp || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name || 'User')}`,
+            created_at: new Date().toISOString(),
+            is_active: 1
+        };
+
+        store.users.push(newCustomer);
+        res.status(201).json({ message: 'Customer created successfully.', user: { id: newCustomer.id, name: newCustomer.name, email: newCustomer.email, role: newCustomer.role } });
+    } catch (err) {
+        res.status(500).json({ message: 'Server error.', error: err.message });
+    }
+});
+
+
 
 // 3. List all customer orders
 router.get('/orders', (req, res) => {
@@ -577,6 +656,32 @@ router.post('/products/bulk-inventory', (req, res) => {
     } catch (err) {
         res.status(500).json({ message: 'Failed to update stock in bulk.', error: err.message });
     }
+});
+
+// 17.5. Update user details
+router.put('/users/:id', (req, res) => {
+    try {
+        const userId = parseInt(req.params.id, 10);
+        const { name, phone, dp } = req.body;
+        const user = store.users.find(u => u.id === userId);
+
+        if (!user) {
+            return res.status(404).json({ message: 'User not found.' });
+        }
+
+        if (name) user.name = name;
+        if (phone !== undefined) user.phone = phone || '';
+        if (dp !== undefined) user.dp = dp || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name || 'User')}`;
+
+        res.json({ message: 'User details updated successfully.', user });
+    } catch (err) {
+        res.status(500).json({ message: 'Server error.', error: err.message });
+    }
+});
+
+// 18. Expose SSE stream route for real-time notifications
+router.get('/order-stream', (req, res) => {
+    sseService.registerClient(req, res);
 });
 
 module.exports = router;

@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const store = require('../store');
 const authMiddleware = require('../middleware/auth');
+const sseService = require('../services/sseService');
 
 // Protect all order routes
 router.use(authMiddleware);
@@ -72,6 +73,20 @@ router.post('/', (req, res) => {
         if (store.cart_items[i].user_id === userId) {
             store.cart_items.splice(i, 1);
         }
+    }
+
+    // Broadcast the new order event to all connected admin panels
+    try {
+        const user = store.users.find(u => u.id === userId) || {};
+        const parsedItems = Array.isArray(items) ? items : JSON.parse(items);
+        sseService.broadcast('new-order', {
+            id,
+            total,
+            customerName: user.name || `${shippingDetails.firstName || ''} ${shippingDetails.lastName || ''}`.trim() || 'Guest Customer',
+            itemsCount: parsedItems.length
+        });
+    } catch (sseErr) {
+        console.error('Failed to broadcast new order via SSE:', sseErr.message);
     }
 
     res.status(201).json({ message: 'Order placed successfully.', orderId: id });

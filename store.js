@@ -14,8 +14,57 @@ const site_settings = {
     hero_title: 'Uclose Co.',
     hero_tagline: "Timeless Wardrobe\nEveryday Power.",
     hero_image: 'https://images.pexels.com/photos/1043474/pexels-photo-1043474.jpeg?auto=compress&cs=tinysrgb&w=2600',
-    announcement_banner: 'Free worldwide shipping on orders over $150'
+    announcement_banner: 'Free worldwide shipping on orders over $150',
+    social_instagram: 'https://instagram.com/uclose',
+    social_facebook: 'https://facebook.com/uclose',
+    contact_email: 'support@uclose.com',
+    contact_phone: '+1 (555) 019-2834',
+    maintenance_mode: 'false',
+    star_color: '#fbbf24'
 };
+
+const reviews = [
+    {
+        id: 1,
+        product_id: 1,
+        name: "Alice Johnson",
+        email: "alice@example.com",
+        rating: 5,
+        comment: "Excellent overshirt! The quality is amazing and it fits perfectly.",
+        approved: 1,
+        created_at: new Date().toISOString()
+    },
+    {
+        id: 2,
+        product_id: 1,
+        name: "Bob Smith",
+        email: "bob@example.com",
+        rating: 4,
+        comment: "Great quality, but the sleeve is slightly longer than expected. Still highly recommend.",
+        approved: 1,
+        created_at: new Date().toISOString()
+    },
+    {
+        id: 3,
+        product_id: 2,
+        name: "Charlie Brown",
+        email: "charlie@example.com",
+        rating: 5,
+        comment: "Absolutely love the pinpoint oxford fabric. Classic clean look.",
+        approved: 1,
+        created_at: new Date().toISOString()
+    },
+    {
+        id: 4,
+        product_id: 4,
+        name: "Diana Prince",
+        email: "diana@example.com",
+        rating: 3,
+        comment: "Very soft cashmere but runs a bit small. Recommend ordering a size up.",
+        approved: 0,
+        created_at: new Date().toISOString()
+    }
+];
 
 // Seed default products
 const SEED_PRODUCTS = [
@@ -187,6 +236,7 @@ async function initStore() {
             password_hash: passwordHash,
             role: 'admin',
             phone: '',
+            dp: 'https://api.dicebear.com/7.x/initials/svg?seed=Admin',
             created_at: new Date().toISOString(),
             is_active: 1
         });
@@ -279,5 +329,6 @@ module.exports = {
     support_tickets,
     categories,
     size_guides,
-    site_settings
+    site_settings,
+    reviews
 };

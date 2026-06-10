@@ -134,7 +134,7 @@ class EmailService {
             await this.initTransporter();
         }
 
-        let trackingUrl = 'http://localhost:5174/track';
+        let trackingUrl = 'http://localhost:5173/track';
         const cleanNumber = (trackingNumber || '').trim();
         const normCourier = (courier || '').toLowerCase().trim();
 

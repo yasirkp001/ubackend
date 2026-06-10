@@ -35,6 +35,7 @@ router.post('/register', async (req, res) => {
             password_hash: passwordHash,
             role: 'customer',
             phone: '',
+            dp: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name || 'User')}`,
             created_at: new Date().toISOString(),
             is_active: 1
         };
@@ -45,7 +46,7 @@ router.post('/register', async (req, res) => {
 
         return res.status(201).json({
             token,
-            user: { id: newUserId, name: newUser.name, email: newUser.email, role: newUser.role, phone: '' }
+            user: { id: newUserId, name: newUser.name, email: newUser.email, role: newUser.role, phone: '', dp: newUser.dp }
         });
     } catch (error) {
         res.status(500).json({ message: 'Server error.', error: error.message });
@@ -81,7 +82,7 @@ router.post('/login', async (req, res) => {
 
         return res.json({
             token,
-            user: { id: user.id, name: user.name, email: user.email, role: user.role, phone: user.phone || '' }
+            user: { id: user.id, name: user.name, email: user.email, role: user.role, phone: user.phone || '', dp: user.dp || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name || 'User')}` }
         });
     } catch (error) {
         res.status(500).json({ message: 'Server error.', error: error.message });
@@ -96,6 +97,9 @@ router.get('/me', authMiddleware, (req, res) => {
     }
     if (user.is_active === 0) {
         return res.status(403).json({ message: 'Your account has been deactivated. Please contact support.' });
+    }
+    if (!user.dp) {
+        user.dp = `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name || 'User')}`;
     }
     res.json({ user });
 });

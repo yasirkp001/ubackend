@@ -1,14 +1,22 @@
 const jwt = require('jsonwebtoken');
 
 module.exports = function (req, res, next) {
+    let token = null;
     const authHeader = req.headers['authorization'];
-    if (!authHeader) {
-        return res.status(401).json({ message: 'Access denied. No token provided.' });
+    
+    console.log('[Auth Middleware] URL:', req.url, 'Auth Header:', authHeader);
+    if (authHeader) {
+        token = authHeader.split(' ')[1];
+    } else {
+        const url = require('url');
+        const parsedUrl = url.parse(req.url, true);
+        if (parsedUrl.query && parsedUrl.query.token) {
+            token = parsedUrl.query.token;
+        }
     }
 
-    const token = authHeader.split(' ')[1];
     if (!token) {
-        return res.status(401).json({ message: 'Access denied. Invalid token format.' });
+        return res.status(401).json({ message: 'Access denied. No token provided.' });
     }
 
     try {

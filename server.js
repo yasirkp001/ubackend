@@ -14,7 +14,10 @@ const categoryRoutes = require('./routes/categories');
 const settingsRoutes = require('./routes/settings');
 const sizeGuideRoutes = require('./routes/sizeGuides');
 const postRoutes = require('./routes/posts');
+const reviewRoutes = require('./routes/reviews');
 const logger = require('./middleware/logger');
+const store = require('./store');
+const jwt = require('jsonwebtoken');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -23,6 +26,45 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 app.use(logger);
+
+// Maintenance Mode check middleware
+app.use((req, res, next) => {
+    // Check if maintenance mode is active
+    if (store.site_settings.maintenance_mode === 'true' || store.site_settings.maintenance_mode === '1') {
+        // Exclude admin routes, auth login/me routes, and settings GET route
+        const isGetSettings = req.path === '/api/settings' && req.method === 'GET';
+        const isAuthRoute = req.path === '/api/auth/login' || req.path === '/api/auth/me';
+        const isAdminRoute = req.path.startsWith('/api/admin');
+
+        if (isGetSettings || isAuthRoute || isAdminRoute) {
+            return next();
+        }
+
+        // Also check if requester is an admin (authenticated via Bearer token)
+        const authHeader = req.headers['authorization'];
+        if (authHeader && authHeader.startsWith('Bearer ')) {
+            const token = authHeader.split(' ')[1];
+            try {
+                const decoded = jwt.verify(token, process.env.JWT_SECRET || 'supersecret_key_uclose_ecommerce_jwt_token_2026');
+                if (decoded && decoded.id) {
+                    const user = store.users.find(u => u.id === decoded.id);
+                    if (user && user.role === 'admin') {
+                        return next();
+                    }
+                }
+            } catch (err) {
+                // Not a valid admin token
+            }
+        }
+
+        return res.status(503).json({
+            message: 'Maintenance Mode',
+            details: store.site_settings.announcement_banner || 'The store is currently undergoing maintenance. Please try again later.'
+        });
+    }
+    next();
+});
+
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Routes
@@ -37,6 +79,7 @@ app.use('/api/categories', categoryRoutes);
 app.use('/api/settings', settingsRoutes);
 app.use('/api/size-guides', sizeGuideRoutes);
 app.use('/api/posts', postRoutes);
+app.use('/api/reviews', reviewRoutes);
 
 // Root welcome endpoint
 app.get('/', (req, res) => {
