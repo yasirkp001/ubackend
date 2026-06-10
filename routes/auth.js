@@ -41,6 +41,10 @@ router.post('/register', async (req, res) => {
         };
         store.users.push(newUser);
 
+        // Broadcast real-time SSE notification
+        const sseService = require('../services/sseService');
+        sseService.broadcast('user-registered', { name: newUser.name, email: newUser.email, time: newUser.created_at });
+
         // Generate JWT token
         const token = jwt.sign({ id: newUserId, email: newUser.email }, JWT_SECRET, { expiresIn: '7d' });
 

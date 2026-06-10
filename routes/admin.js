@@ -142,6 +142,7 @@ router.post('/users/create-admin', async (req, res) => {
         };
 
         store.users.push(newAdmin);
+        store.logActivity(req.user.id, 'Admin Created', `New administrator "${newAdmin.name}" (${newAdmin.email}) was created.`);
         res.status(201).json({ message: 'Administrator created successfully.', user: { id: newAdmin.id, name: newAdmin.name, email: newAdmin.email, role: newAdmin.role } });
     } catch (err) {
         res.status(500).json({ message: 'Server error.', error: err.message });
@@ -180,6 +181,7 @@ router.post('/users/create-customer', async (req, res) => {
         };
 
         store.users.push(newCustomer);
+        store.logActivity(req.user.id, 'Customer Created', `New customer "${newCustomer.name}" (${newCustomer.email}) was created.`);
         res.status(201).json({ message: 'Customer created successfully.', user: { id: newCustomer.id, name: newCustomer.name, email: newCustomer.email, role: newCustomer.role } });
     } catch (err) {
         res.status(500).json({ message: 'Server error.', error: err.message });
@@ -208,7 +210,10 @@ router.get('/orders', (req, res) => {
                         email: u.email || '',
                         name: u.name || ''
                     },
-                    items
+                    items,
+                    promoCode: o.promo_code || null,
+                    discount: o.discount_amount || 0,
+                    adminNotes: o.admin_notes || ''
                 };
             })
             .sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -237,6 +242,7 @@ router.put('/orders/:id', (req, res) => {
         order.status = status;
 
         if (status !== oldStatus) {
+            store.logActivity(req.user.id, 'Order Status Changed', `Order #${orderId} moved from "${oldStatus}" to "${status}".`);
             try {
                 const user = store.users.find(u => u.id === order.user_id) || {};
                 const parsedItems = Array.isArray(order.items) ? order.items : (order.items ? JSON.parse(order.items) : []);
@@ -277,6 +283,7 @@ router.post('/products', (req, res) => {
         };
 
         store.products.push(newProduct);
+        store.logActivity(req.user.id, 'Product Created', `Product "${name}" (#${newId}) was added to the catalog.`);
 
         res.status(201).json({
             message: 'Product created successfully.',
@@ -313,6 +320,7 @@ router.put('/products/:id', (req, res) => {
         product.stock = stock !== undefined ? parseInt(stock, 10) : 50;
         product.sizes = Array.isArray(sizes) ? sizes : ['S', 'M', 'L', 'XL', 'XXL'];
 
+        store.logActivity(req.user.id, 'Product Updated', `Product "${product.name}" (#${productId}) was updated.`);
         res.json({ message: 'Product updated successfully.' });
     } catch (err) {
         res.status(500).json({ message: 'Server error.', error: err.message });
@@ -328,7 +336,8 @@ router.delete('/products/:id', (req, res) => {
             return res.status(404).json({ message: 'Product not found.' });
         }
 
-        store.products.splice(index, 1);
+        const removedProduct = store.products.splice(index, 1)[0];
+        store.logActivity(req.user.id, 'Product Deleted', `Product "${removedProduct.name}" (#${productId}) was deleted.`);
         res.json({ message: 'Product deleted successfully.' });
     } catch (err) {
         res.status(500).json({ message: 'Server error.', error: err.message });
@@ -382,11 +391,46 @@ router.post('/coupons', (req, res) => {
         };
 
         store.coupons.push(newCoupon);
+        store.logActivity(req.user.id, 'Coupon Created', `Coupon "${uppercaseCode}" was created.`);
 
         res.status(201).json({
             message: 'Coupon created successfully.',
             couponId: newId
         });
+    } catch (err) {
+        res.status(500).json({ message: 'Server error.', error: err.message });
+    }
+});
+
+// 9.5. Update a coupon (edit fields or toggle active status)
+router.put('/coupons/:id', (req, res) => {
+    try {
+        const couponId = parseInt(req.params.id, 10);
+        const coupon = store.coupons.find(c => c.id === couponId);
+        if (!coupon) {
+            return res.status(404).json({ message: 'Coupon not found.' });
+        }
+
+        const { code, discount_type, discount_value, min_purchase, active, expiry_date, usage_limit, category } = req.body;
+
+        if (code !== undefined) {
+            const uppercaseCode = code.trim().toUpperCase();
+            const duplicate = store.coupons.find(c => c.code === uppercaseCode && c.id !== couponId);
+            if (duplicate) {
+                return res.status(400).json({ message: 'Another coupon already uses this code.' });
+            }
+            coupon.code = uppercaseCode;
+        }
+        if (discount_type !== undefined) coupon.discount_type = discount_type;
+        if (discount_value !== undefined) coupon.discount_value = parseFloat(discount_value);
+        if (min_purchase !== undefined) coupon.min_purchase = parseFloat(min_purchase) || 0;
+        if (active !== undefined) coupon.active = active ? 1 : 0;
+        if (expiry_date !== undefined) coupon.expiry_date = expiry_date && String(expiry_date).trim() ? String(expiry_date).trim() : null;
+        if (usage_limit !== undefined) coupon.usage_limit = usage_limit && parseInt(usage_limit, 10) > 0 ? parseInt(usage_limit, 10) : null;
+        if (category !== undefined) coupon.category = category && category !== 'All' ? category.trim() : null;
+
+        store.logActivity(req.user.id, 'Coupon Updated', `Coupon "${coupon.code}" was ${active !== undefined && Object.keys(req.body).length === 1 ? (coupon.active ? 'activated' : 'deactivated') : 'updated'}.`);
+        res.json({ message: 'Coupon updated successfully.', coupon });
     } catch (err) {
         res.status(500).json({ message: 'Server error.', error: err.message });
     }
@@ -401,7 +445,8 @@ router.delete('/coupons/:id', (req, res) => {
             return res.status(404).json({ message: 'Coupon not found.' });
         }
 
-        store.coupons.splice(index, 1);
+        const removed = store.coupons.splice(index, 1)[0];
+        store.logActivity(req.user.id, 'Coupon Deleted', `Coupon "${removed.code}" was deleted.`);
         res.json({ message: 'Coupon deleted successfully.' });
     } catch (err) {
         res.status(500).json({ message: 'Server error.', error: err.message });
@@ -419,6 +464,7 @@ router.put('/users/:id/toggle-status', (req, res) => {
         }
 
         user.is_active = user.is_active === 0 ? 1 : 0;
+        store.logActivity(req.user.id, 'User Status Changed', `User "${user.name}" was ${user.is_active ? 'unblocked' : 'blocked'}.`);
         res.json({ message: `User status changed successfully.`, is_active: user.is_active });
     } catch (err) {
         res.status(500).json({ message: 'Server error.', error: err.message });
@@ -458,6 +504,8 @@ router.put('/orders/:id/tracking', (req, res) => {
         order.courier = courier;
         order.tracking_number = tracking_number;
         order.estimated_delivery = estimated_delivery;
+
+        store.logActivity(req.user.id, 'Tracking Updated', `Shipment tracking set on order #${orderId} (${courier}: ${tracking_number}).`);
 
         const user = store.users.find(u => u.id === order.user_id) || {};
 
@@ -501,6 +549,7 @@ router.put('/support/tickets/:id/reply', (req, res) => {
 
         ticket.reply = reply;
         ticket.status = 'Resolved';
+        store.logActivity(req.user.id, 'Support Reply Sent', `Replied to support ticket #${ticketId} from ${ticket.name}.`);
 
         // Send email reply to customer
         try {
@@ -652,6 +701,7 @@ router.post('/products/bulk-inventory', (req, res) => {
             }
         });
 
+        store.logActivity(req.user.id, 'Bulk Inventory Update', `Stock ${action === 'set' ? 'set to' : 'adjusted by'} ${val} for ${updatedCount} products${category && category !== 'All' ? ` in "${category}"` : ''}.`);
         res.json({ message: `Successfully updated stock for ${updatedCount} products.` });
     } catch (err) {
         res.status(500).json({ message: 'Failed to update stock in bulk.', error: err.message });
@@ -679,9 +729,116 @@ router.put('/users/:id', (req, res) => {
     }
 });
 
+// 17.6. Change own admin password
+router.put('/change-password', async (req, res) => {
+    try {
+        const { current_password, new_password } = req.body;
+
+        if (!current_password || !new_password) {
+            return res.status(400).json({ message: 'Current and new passwords are required.' });
+        }
+        if (new_password.length < 6) {
+            return res.status(400).json({ message: 'New password must be at least 6 characters long.' });
+        }
+
+        const user = store.users.find(u => u.id === req.user.id);
+        if (!user) {
+            return res.status(404).json({ message: 'User not found.' });
+        }
+
+        const bcrypt = require('bcryptjs');
+        const isMatch = await bcrypt.compare(current_password, user.password_hash);
+        if (!isMatch) {
+            return res.status(400).json({ message: 'Current password is incorrect.' });
+        }
+
+        const salt = await bcrypt.genSalt(10);
+        user.password_hash = await bcrypt.hash(new_password, salt);
+
+        store.logActivity(req.user.id, 'Password Changed', 'Admin account password was changed.');
+        res.json({ message: 'Password changed successfully.' });
+    } catch (err) {
+        res.status(500).json({ message: 'Server error.', error: err.message });
+    }
+});
+
+// 17.7. Save internal admin notes on an order
+router.put('/orders/:id/notes', (req, res) => {
+    try {
+        const order = store.orders.find(o => o.id === req.params.id);
+        if (!order) {
+            return res.status(404).json({ message: 'Order not found.' });
+        }
+
+        order.admin_notes = req.body.notes || '';
+        store.logActivity(req.user.id, 'Order Notes Updated', `Internal notes saved on order #${order.id}.`);
+        res.json({ message: 'Order notes saved successfully.', adminNotes: order.admin_notes });
+    } catch (err) {
+        res.status(500).json({ message: 'Server error.', error: err.message });
+    }
+});
+
+// 17.8. Get admin activity log
+router.get('/activity', (req, res) => {
+    try {
+        res.json(store.activities);
+    } catch (err) {
+        res.status(500).json({ message: 'Server error.', error: err.message });
+    }
+});
+
 // 18. Expose SSE stream route for real-time notifications
 router.get('/order-stream', (req, res) => {
     sseService.registerClient(req, res);
+});
+
+// 19. Get List of Uploaded Media Assets (Admin only)
+router.get('/media', (req, res) => {
+    try {
+        if (!fs.existsSync(uploadsDir)) {
+            return res.json([]);
+        }
+        const files = fs.readdirSync(uploadsDir);
+        const mediaList = files
+            .filter(file => !file.startsWith('.'))
+            .map(file => {
+                const filePath = path.join(uploadsDir, file);
+                const stats = fs.statSync(filePath);
+                return {
+                    filename: file,
+                    url: `/uploads/${file}`,
+                    size: stats.size,
+                    created_at: stats.mtime
+                };
+            })
+            .sort((a, b) => b.created_at - a.created_at);
+        res.json(mediaList);
+    } catch (err) {
+        res.status(500).json({ message: 'Failed to read media directory', error: err.message });
+    }
+});
+
+// 20. Delete an Uploaded Media Asset (Admin only)
+router.delete('/media/:filename', (req, res) => {
+    try {
+        const filename = req.params.filename;
+        const filePath = path.join(uploadsDir, filename);
+
+        // Security check: prevent directory traversal
+        const resolvedPath = path.resolve(filePath);
+        if (!resolvedPath.startsWith(path.resolve(uploadsDir))) {
+            return res.status(403).json({ message: 'Forbidden access path.' });
+        }
+
+        if (fs.existsSync(filePath)) {
+            fs.unlinkSync(filePath);
+            res.json({ message: 'Media file deleted successfully.' });
+        } else {
+            res.status(404).json({ message: 'Media file not found.' });
+        }
+    } catch (err) {
+        res.status(500).json({ message: 'Failed to delete media file', error: err.message });
+    }
 });
 
 module.exports = router;

@@ -9,6 +9,22 @@ const coupons = [];
 const support_tickets = [];
 const categories = [];
 const size_guides = [];
+const activities = [];
+
+// Record an admin action in the activity log (most recent first, capped at 300)
+let nextActivityId = 1;
+function logActivity(actorId, action, detail) {
+    const actor = users.find(u => u.id === actorId);
+    activities.unshift({
+        id: nextActivityId++,
+        actor_id: actorId,
+        actor_name: actor ? actor.name : 'System',
+        action,
+        detail: detail || '',
+        created_at: new Date().toISOString()
+    });
+    if (activities.length > 300) activities.length = 300;
+}
 const site_settings = {
     site_name: 'Uclose Co.',
     hero_title: 'Uclose Co.',
@@ -330,5 +346,7 @@ module.exports = {
     categories,
     size_guides,
     site_settings,
-    reviews
+    reviews,
+    activities,
+    logActivity
 };

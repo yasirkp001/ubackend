@@ -99,6 +99,11 @@ router.post('/', authMiddleware, (req, res) => {
         };
 
         store.reviews.push(newReview);
+
+        // Broadcast real-time SSE review submission
+        const sseService = require('../services/sseService');
+        sseService.broadcast('review-submitted', { id: newReview.id, name: newReview.name, rating: newReview.rating, time: newReview.created_at });
+
         res.status(201).json({ message: 'Review submitted for moderation.', review: newReview });
     } catch (err) {
         res.status(500).json({ message: 'Server error.', error: err.message });

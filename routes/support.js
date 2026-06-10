@@ -11,7 +11,7 @@ router.post('/tickets', (req, res) => {
     }
 
     const nextId = store.support_tickets.length > 0 ? Math.max(...store.support_tickets.map(t => t.id)) + 1 : 1;
-    store.support_tickets.push({
+    const ticket = {
         id: nextId,
         name: name.trim(),
         email: email.trim(),
@@ -19,7 +19,12 @@ router.post('/tickets', (req, res) => {
         status: 'Open',
         reply: null,
         created_at: new Date().toISOString()
-    });
+    };
+    store.support_tickets.push(ticket);
+
+    // Broadcast real-time SSE ticket creation
+    const sseService = require('../services/sseService');
+    sseService.broadcast('ticket-created', { id: nextId, name: ticket.name, email: ticket.email, time: ticket.created_at });
 
     res.status(201).json({
         message: 'Support ticket submitted successfully.',
