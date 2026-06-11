@@ -31,6 +31,45 @@ router.get('/', (req, res) => {
     res.json(userOrders);
 });
 
+// Create a Stripe Payment Intent
+router.post('/payment-intent', async (req, res) => {
+    const { amount, currency } = req.body;
+    
+    if (!amount) {
+        return res.status(400).json({ message: 'Amount is required.' });
+    }
+
+    try {
+        const stripeKey = process.env.STRIPE_SECRET_KEY;
+        if (!stripeKey) {
+            console.log('[Stripe] STRIPE_SECRET_KEY not set. Simulating Payment Intent creation.');
+            return res.json({
+                clientSecret: 'simulated_secret_' + Math.random().toString(36).substring(2, 15),
+                isSimulated: true
+            });
+        }
+
+        const stripe = require('stripe')(stripeKey);
+        const amountInCents = Math.round(parseFloat(amount) * 100);
+
+        const paymentIntent = await stripe.paymentIntents.create({
+            amount: amountInCents,
+            currency: currency || 'usd',
+            automatic_payment_methods: {
+                enabled: true,
+            },
+        });
+
+        res.json({
+            clientSecret: paymentIntent.client_secret,
+            isSimulated: false
+        });
+    } catch (err) {
+        console.error('Stripe Payment Intent Error:', err.message);
+        res.status(500).json({ message: 'Failed to create payment intent.', error: err.message });
+    }
+});
+
 // Create a new order (from checkout)
 router.post('/', (req, res) => {
     const userId = req.user.id;

@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const store = require('../store');
+const emailService = require('../services/emailService');
 
 // Submit a new support inquiry
 router.post('/tickets', (req, res) => {
@@ -35,6 +36,13 @@ router.post('/tickets', (req, res) => {
     // Broadcast real-time SSE ticket creation
     const sseService = require('../services/sseService');
     sseService.broadcast('ticket-created', { id: nextId, name: ticket.name, email: ticket.email, time: ticket.created_at });
+
+    // Send email notification to admin
+    try {
+        emailService.sendNewSupportTicketNotification(ticket);
+    } catch (emailErr) {
+        console.error('Failed to send admin ticket notification email:', emailErr.message);
+    }
 
     res.status(201).json({
         message: 'Support ticket submitted successfully.',

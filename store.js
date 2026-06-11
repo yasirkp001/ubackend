@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
+const { MongoClient } = require('mongodb');
 
-// In-Memory Database Arrays
+// In-Memory Database Arrays (will be synced with MongoDB if MONGODB_URI is provided)
 const users = [];
 const products = [];
 const cart_items = [];
@@ -11,6 +12,125 @@ const categories = [];
 const size_guides = [];
 const activities = [];
 const live_activities = [];
+
+let db = null;
+let client = null;
+let lastState = {};
+let isLoaded = false;
+
+async function connectMongo() {
+    const uri = process.env.MONGODB_URI;
+    if (!uri) {
+        console.log('[Mongo] MONGODB_URI not found in environment. Operating in memory-only mode.');
+        return;
+    }
+    try {
+        console.log('[Mongo] Connecting to MongoDB Atlas...');
+        client = new MongoClient(uri);
+        await client.connect();
+        db = client.db('uclose');
+        console.log('[Mongo] Connected successfully to MongoDB Atlas database: uclose');
+    } catch (err) {
+        console.error('[Mongo] Failed to connect to MongoDB Atlas:', err.message);
+    }
+}
+
+async function loadCollection(name, memoryArray) {
+    if (!db) return false;
+    try {
+        const data = await db.collection(name).find({}).toArray();
+        if (data.length > 0) {
+            memoryArray.length = 0;
+            data.forEach(item => {
+                delete item._id; // remove mongodb internal ID to keep structures clean
+                memoryArray.push(item);
+            });
+            console.log(`[Mongo] Loaded ${data.length} items into memory for collection '${name}'`);
+            return true;
+        }
+    } catch (err) {
+        console.error(`[Mongo] Error loading collection '${name}':`, err.message);
+    }
+    return false;
+}
+
+async function saveCollection(name, memoryArray) {
+    if (!db) return;
+    try {
+        await db.collection(name).deleteMany({});
+        if (memoryArray.length > 0) {
+            const cleanArray = memoryArray.map(item => {
+                const copy = { ...item };
+                delete copy._id;
+                return copy;
+            });
+            await db.collection(name).insertMany(cleanArray);
+        }
+    } catch (err) {
+        console.error(`[Mongo] Error saving collection '${name}':`, err.message);
+    }
+}
+
+async function loadSettings() {
+    if (!db) return;
+    try {
+        const doc = await db.collection('settings').findOne({});
+        if (doc) {
+            delete doc._id;
+            Object.assign(site_settings, doc);
+            console.log('[Mongo] Loaded site settings into memory.');
+        } else {
+            await db.collection('settings').insertOne({ ...site_settings });
+            console.log('[Mongo] Seeded initial site settings to MongoDB.');
+        }
+    } catch (err) {
+        console.error('[Mongo] Error loading settings:', err.message);
+    }
+}
+
+async function saveSettings() {
+    if (!db) return;
+    try {
+        await db.collection('settings').deleteMany({});
+        const copy = { ...site_settings };
+        delete copy._id;
+        await db.collection('settings').insertOne(copy);
+    } catch (err) {
+        console.error('[Mongo] Error saving settings:', err.message);
+    }
+}
+
+async function checkAndSync() {
+    if (!db || !isLoaded) return;
+    const collections = {
+        users, products, cart_items, orders, coupons,
+        support_tickets, categories, size_guides, reviews,
+        activities, live_activities
+    };
+    for (const [name, arr] of Object.entries(collections)) {
+        try {
+            const serialized = JSON.stringify(arr);
+            if (lastState[name] !== serialized) {
+                lastState[name] = serialized;
+                await saveCollection(name, arr);
+                console.log(`[Mongo] Synchronized collection '${name}' to MongoDB.`);
+            }
+        } catch (e) {
+            console.error(`[Mongo] Error stringifying or saving '${name}':`, e.message);
+        }
+    }
+    try {
+        const settingsSerialized = JSON.stringify(site_settings);
+        if (lastState.settings !== settingsSerialized) {
+            lastState.settings = settingsSerialized;
+            await saveSettings();
+            console.log(`[Mongo] Synchronized site settings to MongoDB.`);
+        }
+    } catch (e) {
+        console.error('[Mongo] Error stringifying or saving settings:', e.message);
+    }
+}
+
 
 // Record an admin action in the activity log (most recent first, capped at 300)
 let nextActivityId = 1;
@@ -259,108 +379,150 @@ const SEED_PRODUCTS = [
 
 // Helper to seed all data asynchronously on boot
 async function initStore() {
-    // 1. Seed Admin
-    try {
-        const salt = await bcrypt.genSalt(10);
-        const passwordHash = await bcrypt.hash('admin123', salt);
-        users.push({
-            id: 1,
-            name: 'Admin',
-            email: 'admin@uclose.com',
-            password_hash: passwordHash,
-            role: 'admin',
-            phone: '',
-            dp: 'https://api.dicebear.com/7.x/initials/svg?seed=Admin',
-            created_at: new Date().toISOString(),
-            is_active: 1
-        });
-        console.log('[In-Memory Store] Seeded default admin user.');
-    } catch (e) {
-        console.error('Failed to hash admin password:', e.message);
+    // Connect to MongoDB Atlas
+    await connectMongo();
+
+    const collections = {
+        users, products, cart_items, orders, coupons,
+        support_tickets, categories, size_guides, reviews,
+        activities, live_activities
+    };
+
+    let loadedAny = false;
+    if (db) {
+        for (const [name, arr] of Object.entries(collections)) {
+            const ok = await loadCollection(name, arr);
+            if (ok) loadedAny = true;
+        }
+        await loadSettings();
     }
 
-    // 2. Seed Products
-    SEED_PRODUCTS.forEach(p => products.push({ ...p, images: p.images || [p.image], sizes: p.sizes || ['S', 'M', 'L', 'XL', 'XXL'] }));
-    console.log('[In-Memory Store] Seeded default products.');
+    if (!loadedAny) {
+        console.log('[Mongo] No existing data found in MongoDB or memory-only mode. Seeding default data...');
+        
+        // 1. Seed Admin
+        try {
+            const salt = await bcrypt.genSalt(10);
+            const passwordHash = await bcrypt.hash('admin123', salt);
+            users.push({
+                id: 1,
+                name: 'Admin',
+                email: 'admin@uclose.com',
+                password_hash: passwordHash,
+                role: 'admin',
+                phone: '',
+                dp: 'https://api.dicebear.com/7.x/initials/svg?seed=Admin',
+                created_at: new Date().toISOString(),
+                is_active: 1
+            });
+            console.log('[In-Memory Store] Seeded default admin user.');
+        } catch (e) {
+            console.error('Failed to hash admin password:', e.message);
+        }
 
-    // 3. Seed Coupons
-    coupons.push({
-        id: 1,
-        code: 'UCLOSE10',
-        discount_type: 'percentage',
-        discount_value: 10,
-        min_purchase: 50,
-        active: 1,
-        created_at: new Date().toISOString(),
-        expiry_date: null,
-        usage_limit: null,
-        used_count: 0,
-        category: null
-    });
-    coupons.push({
-        id: 2,
-        code: 'FLAT50',
-        discount_type: 'flat',
-        discount_value: 50,
-        min_purchase: 200,
-        active: 1,
-        created_at: new Date().toISOString(),
-        expiry_date: null,
-        usage_limit: null,
-        used_count: 0,
-        category: null
-    });
-    console.log('[In-Memory Store] Seeded default coupons.');
+        // 2. Seed Products
+        SEED_PRODUCTS.forEach(p => products.push({ ...p, images: p.images || [p.image], sizes: p.sizes || ['S', 'M', 'L', 'XL', 'XXL'] }));
+        console.log('[In-Memory Store] Seeded default products.');
 
-    // 4. Seed Categories
-    ['Shirts', 'Outerwear', 'Knitwear', 'Bottoms', 'Accessories'].forEach((cat, idx) => {
-        categories.push({
-            id: idx + 1,
-            name: cat,
-            created_at: new Date().toISOString()
+        // 3. Seed Coupons
+        coupons.push({
+            id: 1,
+            code: 'UCLOSE10',
+            discount_type: 'percentage',
+            discount_value: 10,
+            min_purchase: 50,
+            active: 1,
+            created_at: new Date().toISOString(),
+            expiry_date: null,
+            usage_limit: null,
+            used_count: 0,
+            category: null
         });
-    });
-    console.log('[In-Memory Store] Seeded default categories.');
+        coupons.push({
+            id: 2,
+            code: 'FLAT50',
+            discount_type: 'flat',
+            discount_value: 50,
+            min_purchase: 200,
+            active: 1,
+            created_at: new Date().toISOString(),
+            expiry_date: null,
+            usage_limit: null,
+            used_count: 0,
+            category: null
+        });
+        console.log('[In-Memory Store] Seeded default coupons.');
 
-    // 5. Seed Size Guides
-    size_guides.push({
-        id: 1,
-        name: 'Shirts Size Guide',
-        category: 'Shirts',
-        columns: ['Chest (in)', 'Sleeve (in)', 'Neck (in)'],
-        slots: [
-            { size: 'S', measurements: ['36-38', '33', '14-14.5'] },
-            { size: 'M', measurements: ['38-40', '34', '15-15.5'] },
-            { size: 'L', measurements: ['40-42', '35', '16-16.5'] },
-            { size: 'XL', measurements: ['42-44', '36', '17-17.5'] },
-            { size: 'XXL', measurements: ['44-46', '37', '18-18.5'] }
-        ]
-    });
-    size_guides.push({
-        id: 2,
-        name: 'Bottoms Size Guide',
-        category: 'Bottoms',
-        columns: ['Waist (in)', 'Inseam (in)', 'Hip (in)'],
-        slots: [
-            { size: 'S', measurements: ['28-30', '30', '36-38'] },
-            { size: 'M', measurements: ['31-33', '32', '38-40'] },
-            { size: 'L', measurements: ['34-36', '32', '40-42'] },
-            { size: 'XL', measurements: ['38-40', '34', '42-44'] },
-            { size: 'XXL', measurements: ['42-44', '34', '46-48'] }
-        ]
-    });
-    console.log('[In-Memory Store] Seeded default size guides.');
-    
-    // Seed initial live activities
-    live_activities.push({
-        id: 'live-seed-1',
-        type: 'system',
-        name: 'System Initialized',
-        message: 'Uclose e-commerce platform started successfully.',
-        time: new Date().toISOString(),
-        color: '#10b981',
-        icon: '⚡'
-    });
+        // 4. Seed Categories
+        ['Shirts', 'Outerwear', 'Knitwear', 'Bottoms', 'Accessories'].forEach((cat, idx) => {
+            categories.push({
+                id: idx + 1,
+                name: cat,
+                created_at: new Date().toISOString()
+            });
+        });
+        console.log('[In-Memory Store] Seeded default categories.');
+
+        // 5. Seed Size Guides
+        size_guides.push({
+            id: 1,
+            name: 'Shirts Size Guide',
+            category: 'Shirts',
+            columns: ['Chest (in)', 'Sleeve (in)', 'Neck (in)'],
+            slots: [
+                { size: 'S', measurements: ['36-38', '33', '14-14.5'] },
+                { size: 'M', measurements: ['38-40', '34', '15-15.5'] },
+                { size: 'L', measurements: ['40-42', '35', '16-16.5'] },
+                { size: 'XL', measurements: ['42-44', '36', '17-17.5'] },
+                { size: 'XXL', measurements: ['44-46', '37', '18-18.5'] }
+            ]
+        });
+        size_guides.push({
+            id: 2,
+            name: 'Bottoms Size Guide',
+            category: 'Bottoms',
+            columns: ['Waist (in)', 'Inseam (in)', 'Hip (in)'],
+            slots: [
+                { size: 'S', measurements: ['28-30', '30', '36-38'] },
+                { size: 'M', measurements: ['31-33', '32', '38-40'] },
+                { size: 'L', measurements: ['34-36', '32', '40-42'] },
+                { size: 'XL', measurements: ['38-40', '34', '42-44'] },
+                { size: 'XXL', measurements: ['42-44', '34', '46-48'] }
+            ]
+        });
+        console.log('[In-Memory Store] Seeded default size guides.');
+        
+        // Seed initial live activities
+        live_activities.push({
+            id: 'live-seed-1',
+            type: 'system',
+            name: 'System Initialized',
+            message: 'Uclose e-commerce platform started successfully.',
+            time: new Date().toISOString(),
+            color: '#10b981',
+            icon: '⚡'
+        });
+
+        // Save everything to MongoDB immediately
+        if (db) {
+            for (const [name, arr] of Object.entries(collections)) {
+                await saveCollection(name, arr);
+            }
+            await saveSettings();
+            console.log('[Mongo] Initial seed data successfully saved to MongoDB Atlas.');
+        }
+    }
+
+    // Set initial lastState values to prevent writing immediately on boot
+    for (const [name, arr] of Object.entries(collections)) {
+        lastState[name] = JSON.stringify(arr);
+    }
+    lastState.settings = JSON.stringify(site_settings);
+
+    isLoaded = true;
+
+    // Start background sync loop every 1500ms
+    setInterval(checkAndSync, 1500);
 }
 
 initStore();

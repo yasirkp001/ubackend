@@ -263,7 +263,7 @@ router.post('/products', (req, res) => {
     try {
         const { name, price, category, image, description, details, care, images, stock, sizes } = req.body;
 
-        if (!name || !price || !category || !image) {
+        if (!name || price === undefined || price === null || !category || !image) {
             return res.status(400).json({ message: 'Name, price, category, and image are required.' });
         }
 
@@ -300,7 +300,7 @@ router.put('/products/:id', (req, res) => {
         const productId = parseInt(req.params.id, 10);
         const { name, price, category, image, description, details, care, images, stock, sizes } = req.body;
 
-        if (!name || !price || !category || !image) {
+        if (!name || price === undefined || price === null || !category || !image) {
             return res.status(400).json({ message: 'Name, price, category, and image are required.' });
         }
 

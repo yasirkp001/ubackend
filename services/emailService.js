@@ -1,9 +1,22 @@
 const nodemailer = require('nodemailer');
+const store = require('../store');
 
 class EmailService {
     constructor() {
         this.transporter = null;
         this.fromAddress = '';
+    }
+
+    shouldSendEmail(to) {
+        const recipient = (to || '').trim().toLowerCase();
+        if (!recipient) return false;
+        
+        // Find if the user exists and is inactive/blocked (is_active === 0)
+        const user = store.users.find(u => u.email && u.email.toLowerCase() === recipient);
+        if (user && user.is_active === 0) {
+            return false;
+        }
+        return true;
     }
 
     async initTransporter() {
@@ -38,9 +51,61 @@ class EmailService {
         }
     }
 
+    async sendEmail(mailOptions, description = 'Email') {
+        const to = mailOptions.to;
+        
+        // If SendGrid is configured
+        if (process.env.SENDGRID_API_KEY) {
+            const sgMail = require('@sendgrid/mail');
+            sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+            
+            const from = process.env.EMAIL_FROM || 'support@uclose.com';
+            const msg = {
+                to: to,
+                from: from,
+                subject: mailOptions.subject,
+                html: mailOptions.html
+            };
+            
+            try {
+                const info = await sgMail.send(msg);
+                console.log(`[Email Service - SendGrid] ${description} sent to ${to}`);
+                return info;
+            } catch (error) {
+                console.error(`[Email Service - SendGrid] Failed to send ${description.toLowerCase()} to ${to}:`, error.response ? error.response.body : error.message);
+            }
+        } else {
+            // Otherwise, fall back to Nodemailer (Ethereal / SMTP)
+            if (!this.transporter) {
+                await this.initTransporter();
+            }
+            
+            // Ensure mailOptions.from matches nodemailer's configuration if not set
+            if (!mailOptions.from) {
+                mailOptions.from = this.fromAddress;
+            }
+            
+            try {
+                const info = await this.transporter.sendMail(mailOptions);
+                if (process.env.EMAIL_SERVICE === 'ethereal' || !process.env.EMAIL_SERVICE) {
+                    console.log('--------------------------------------------------');
+                    console.log(`[Email Service - Ethereal] ${description} sent to ${to}`);
+                    console.log(`[Email Service - Ethereal] Preview Link: ${nodemailer.getTestMessageUrl(info)}`);
+                    console.log('--------------------------------------------------');
+                } else {
+                    console.log(`[Email Service] ${description} sent to ${to}`);
+                }
+                return info;
+            } catch (error) {
+                console.error(`[Email Service] Failed to send ${description.toLowerCase()} to ${to}:`, error.message);
+            }
+        }
+    }
+
     async sendStatusUpdateEmail(to, orderId, newStatus, totalAmount, items) {
-        if (!this.transporter) {
-            await this.initTransporter();
+        if (!this.shouldSendEmail(to)) {
+            console.log(`[Email Service] Aborted sending status update email. User with email ${to} is blocked/inactive.`);
+            return null;
         }
 
         const itemsList = Array.isArray(items) 
@@ -63,7 +128,6 @@ class EmailService {
         }
 
         const mailOptions = {
-            from: this.fromAddress,
             to,
             subject: `Uclose Order Update: #${orderId} - ${newStatus}`,
             html: `
@@ -111,27 +175,13 @@ class EmailService {
             `,
         };
 
-        try {
-            const info = await this.transporter.sendMail(mailOptions);
-            if (process.env.EMAIL_SERVICE === 'ethereal' || !process.env.EMAIL_SERVICE) {
-                console.log('--------------------------------------------------');
-                console.log(`[Email Service - Ethereal] Status Update Email sent to ${to}`);
-                console.log(`[Email Service - Ethereal] Preview Link: ${nodemailer.getTestMessageUrl(info)}`);
-                console.log('--------------------------------------------------');
-            } else {
-                console.log(`[Email Service] Status update email sent to ${to}`);
-            }
-            return info;
-        } catch (error) {
-            console.error(`[Email Service] Failed to send status email to ${to}:`, error.message);
-            // Don't fail the request on email send failure, just log it.
-        }
+        return await this.sendEmail(mailOptions, 'Status Update Email');
     }
 
-
     async sendTrackingUpdateEmail(to, orderId, courier, trackingNumber, estimatedDelivery) {
-        if (!this.transporter) {
-            await this.initTransporter();
+        if (!this.shouldSendEmail(to)) {
+            console.log(`[Email Service] Aborted sending tracking update email. User with email ${to} is blocked/inactive.`);
+            return null;
         }
 
         let trackingUrl = 'http://localhost:5173/track';
@@ -151,7 +201,6 @@ class EmailService {
         }
 
         const mailOptions = {
-            from: this.fromAddress,
             to,
             subject: `Shipment Dispatch Alert: Uclose Order #${orderId}`,
             html: `
@@ -204,27 +253,16 @@ class EmailService {
             `
         };
 
-        try {
-            const info = await this.transporter.sendMail(mailOptions);
-            if (process.env.EMAIL_SERVICE === 'ethereal' || !process.env.EMAIL_SERVICE) {
-                console.log('--------------------------------------------------');
-                console.log(`[Email Service - Ethereal] Shipment Tracking Email sent to ${to}`);
-                console.log(`[Email Service - Ethereal] Preview Link: ${nodemailer.getTestMessageUrl(info)}`);
-                console.log('--------------------------------------------------');
-            }
-            return info;
-        } catch (error) {
-            console.error(`[Email Service] Failed to send tracking email to ${to}:`, error.message);
-        }
+        return await this.sendEmail(mailOptions, 'Shipment Tracking Email');
     }
 
     async sendSupportReplyEmail(to, name, originalMessage, replyText) {
-        if (!this.transporter) {
-            await this.initTransporter();
+        if (!this.shouldSendEmail(to)) {
+            console.log(`[Email Service] Aborted sending support reply email. User with email ${to} is blocked/inactive.`);
+            return null;
         }
 
         const mailOptions = {
-            from: this.fromAddress,
             to,
             subject: `Re: Uclose Support Request - Support Response`,
             html: `
@@ -257,18 +295,56 @@ class EmailService {
             `
         };
 
-        try {
-            const info = await this.transporter.sendMail(mailOptions);
-            if (process.env.EMAIL_SERVICE === 'ethereal' || !process.env.EMAIL_SERVICE) {
-                console.log('--------------------------------------------------');
-                console.log(`[Email Service - Ethereal] Support Reply Email sent to ${to}`);
-                console.log(`[Email Service - Ethereal] Preview Link: ${nodemailer.getTestMessageUrl(info)}`);
-                console.log('--------------------------------------------------');
-            }
-            return info;
-        } catch (error) {
-            console.error(`[Email Service] Failed to send support reply email to ${to}:`, error.message);
-        }
+        return await this.sendEmail(mailOptions, 'Support Reply Email');
+    }
+
+    async sendNewSupportTicketNotification(ticket) {
+        const adminEmail = 'yasirkp1014@gmail.com';
+        const { id, name, email, message } = ticket;
+
+        const mailOptions = {
+            to: adminEmail,
+            subject: `New Support Inquiry: Ticket #${id} - ${name}`,
+            html: `
+                <div style="font-family: 'Outfit', sans-serif, -apple-system; max-width: 540px; margin: auto; padding: 32px; border: 1px solid #e5e7eb; background-color: #ffffff;">
+                    <div style="text-align: center; margin-bottom: 24px;">
+                        <span style="font-size: 24px; font-weight: 800; letter-spacing: -1px; text-transform: uppercase; color: #000;">Uclose.</span>
+                        <div style="font-size: 9px; font-weight: 700; letter-spacing: 2px; text-transform: uppercase; color: #9ca3af; margin-top: 4px;">Admin Alert</div>
+                    </div>
+
+                    <div style="border-top: 1px solid #000; border-bottom: 1px solid #000; padding: 20px 0; margin-bottom: 24px; text-align: center;">
+                        <p style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: #6b7280; margin: 0 0 8px 0;">Ticket #${id}</p>
+                        <h2 style="font-size: 20px; font-weight: 700; text-transform: uppercase; letter-spacing: -0.5px; color: #000; margin: 0;">New Support Request</h2>
+                    </div>
+
+                    <div style="background-color: #f9fafb; border: 1px solid #e5e7eb; padding: 20px; border-radius: 2px; margin-bottom: 24px;">
+                        <table style="width: 100%; font-size: 13px;">
+                            <tr>
+                                <td style="padding: 6px 0; color: #6b7280; font-weight: 500;">Customer Name:</td>
+                                <td style="padding: 6px 0; font-weight: 700; color: #000; text-align: right;">${name || 'Anonymous'}</td>
+                            </tr>
+                            <tr>
+                                <td style="padding: 6px 0; color: #6b7280; font-weight: 500;">Customer Email:</td>
+                                <td style="padding: 6px 0; font-weight: 700; color: #000; text-align: right; font-family: monospace;">${email}</td>
+                            </tr>
+                        </table>
+                    </div>
+
+                    <h3 style="font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 1.5px; color: #9ca3af; border-bottom: 1px solid #e5e7eb; padding-bottom: 8px; margin-bottom: 12px;">Message</h3>
+                    <div style="border-left: 2px solid #000; padding-left: 16px; margin: 16px 0; font-size: 14px; color: #4b5563; line-height: 1.6;">
+                        ${message.replace(/\n/g, '<br/>')}
+                    </div>
+
+                    <div style="text-align: center; margin-top: 32px; border-top: 1px solid #e5e7eb; padding-top: 16px;">
+                        <p style="margin: 0; font-size: 10px; color: #9ca3af; text-transform: uppercase; letter-spacing: 1px; font-weight: 700;">
+                            Please reply to this ticket in the Admin Dashboard.
+                        </p>
+                    </div>
+                </div>
+            `
+        };
+
+        return await this.sendEmail(mailOptions, 'New Ticket Notification');
     }
 }
 
