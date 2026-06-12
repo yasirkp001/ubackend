@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const bcrypt = require('bcryptjs');
 const store = require('../store');
 const authMiddleware = require('../middleware/auth');
 const adminMiddleware = require('../middleware/admin');
@@ -123,8 +124,6 @@ router.post('/users/create-admin', async (req, res) => {
         if (existingUser) {
             return res.status(400).json({ message: 'A user or admin already exists with this email.' });
         }
-
-        const bcrypt = require('bcryptjs');
         const salt = await bcrypt.genSalt(10);
         const passwordHash = await bcrypt.hash(password, salt);
 
@@ -142,6 +141,7 @@ router.post('/users/create-admin', async (req, res) => {
         };
 
         store.users.push(newAdmin);
+        await store.persist('users');
         store.logActivity(req.user.id, 'Admin Created', `New administrator "${newAdmin.name}" (${newAdmin.email}) was created.`);
         res.status(201).json({ message: 'Administrator created successfully.', user: { id: newAdmin.id, name: newAdmin.name, email: newAdmin.email, role: newAdmin.role } });
     } catch (err) {
@@ -162,8 +162,6 @@ router.post('/users/create-customer', async (req, res) => {
         if (existingUser) {
             return res.status(400).json({ message: 'A user already exists with this email.' });
         }
-
-        const bcrypt = require('bcryptjs');
         const salt = await bcrypt.genSalt(10);
         const passwordHash = await bcrypt.hash(password, salt);
 
@@ -181,6 +179,7 @@ router.post('/users/create-customer', async (req, res) => {
         };
 
         store.users.push(newCustomer);
+        await store.persist('users');
         store.logActivity(req.user.id, 'Customer Created', `New customer "${newCustomer.name}" (${newCustomer.email}) was created.`);
         res.status(201).json({ message: 'Customer created successfully.', user: { id: newCustomer.id, name: newCustomer.name, email: newCustomer.email, role: newCustomer.role } });
     } catch (err) {
@@ -709,28 +708,39 @@ router.post('/products/bulk-inventory', (req, res) => {
 });
 
 // 17.5. Update user details
-router.put('/users/:id', (req, res) => {
+router.put('/users/:id', async (req, res) => {
     try {
         const userId = parseInt(req.params.id, 10);
-        const { name, phone, dp } = req.body;
+        const { name, phone, dp, password } = req.body;
         const user = store.users.find(u => u.id === userId);
 
         if (!user) {
             return res.status(404).json({ message: 'User not found.' });
         }
 
+        if (password) {
+            if (password.length < 6) {
+                return res.status(400).json({ message: 'Password must be at least 6 characters long.' });
+            }
+            const salt = await bcrypt.genSalt(10);
+            user.password_hash = await bcrypt.hash(password, salt);
+        }
+
         if (name) user.name = name;
         if (phone !== undefined) user.phone = phone || '';
         if (dp !== undefined) user.dp = dp || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(user.name || 'User')}`;
 
-        res.json({ message: 'User details updated successfully.', user });
+        await store.persist('users');
+
+        const { password_hash, ...safeUser } = user;
+        res.json({ message: 'User details updated successfully.', user: safeUser });
     } catch (err) {
         res.status(500).json({ message: 'Server error.', error: err.message });
     }
 });
 
 // 17.55. Delete a customer account
-router.delete('/users/:id', (req, res) => {
+router.delete('/users/:id', async (req, res) => {
     try {
         const userId = parseInt(req.params.id, 10);
         const index = store.users.findIndex(u => u.id === userId);
@@ -752,6 +762,8 @@ router.delete('/users/:id', (req, res) => {
             if (store.cart_items[i].user_id === userId) store.cart_items.splice(i, 1);
         }
 
+        await store.persist('users');
+        await store.persist('cart_items');
         store.logActivity(req.user.id, 'Customer Deleted', `Customer "${removed.name}" (${removed.email}) was permanently deleted.`);
         res.json({ message: 'Customer deleted successfully.' });
     } catch (err) {
@@ -814,8 +826,6 @@ router.put('/change-password', async (req, res) => {
         if (!user) {
             return res.status(404).json({ message: 'User not found.' });
         }
-
-        const bcrypt = require('bcryptjs');
         const isMatch = await bcrypt.compare(current_password, user.password_hash);
         if (!isMatch) {
             return res.status(400).json({ message: 'Current password is incorrect.' });
@@ -823,6 +833,7 @@ router.put('/change-password', async (req, res) => {
 
         const salt = await bcrypt.genSalt(10);
         user.password_hash = await bcrypt.hash(new_password, salt);
+        await store.persist('users');
 
         store.logActivity(req.user.id, 'Password Changed', 'Admin account password was changed.');
         

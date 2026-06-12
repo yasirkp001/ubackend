@@ -27,6 +27,36 @@ app.use(cors());
 app.use(express.json());
 app.use(logger);
 
+// Auto-sync state to MongoDB on mutating requests (POST, PUT, DELETE)
+// This is critical for hosted environments like Render where the CPU gets throttled/paused
+// after a response is sent, preventing background setInterval loops from running.
+app.use((req, res, next) => {
+    if (req.method !== 'GET') {
+        const originalJson = res.json;
+        const originalSend = res.send;
+        let synced = false;
+
+        const triggerSync = () => {
+            if (synced) return;
+            synced = true;
+            store.checkAndSync().catch(err => {
+                console.error('[Sync Middleware] Auto-sync to MongoDB failed:', err.message);
+            });
+        };
+
+        res.json = function(body) {
+            triggerSync();
+            return originalJson.call(this, body);
+        };
+
+        res.send = function(body) {
+            triggerSync();
+            return originalSend.call(this, body);
+        };
+    }
+    next();
+});
+
 // Maintenance Mode check middleware
 app.use((req, res, next) => {
     // Check if maintenance mode is active

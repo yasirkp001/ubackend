@@ -21,8 +21,8 @@ let isLoaded = false;
 async function connectMongo() {
     const uri = process.env.MONGODB_URI;
     if (!uri) {
-        console.log('[Mongo] MONGODB_URI not found in environment. Operating in memory-only mode.');
-        return;
+        console.error('[Mongo] CRITICAL ERROR: MONGODB_URI not found in environment variables. Process terminated.');
+        process.exit(1);
     }
     try {
         console.log('[Mongo] Connecting to MongoDB Atlas...');
@@ -31,9 +31,12 @@ async function connectMongo() {
         db = client.db('uclose');
         console.log('[Mongo] Connected successfully to MongoDB Atlas database: uclose');
     } catch (err) {
-        console.error('[Mongo] Failed to connect to MongoDB Atlas:', err.message);
+        console.error('[Mongo] CRITICAL ERROR: Failed to connect to MongoDB Atlas:', err.message);
+        console.error('[Mongo] Please verify your MONGODB_URI and your IP Access List (Whitelist) in MongoDB Atlas.');
+        process.exit(1);
     }
 }
+
 
 async function loadCollection(name, memoryArray) {
     if (!db) return false;
@@ -97,6 +100,26 @@ async function saveSettings() {
         await db.collection('settings').insertOne(copy);
     } catch (err) {
         console.error('[Mongo] Error saving settings:', err.message);
+    }
+}
+
+// Immediately flush a single collection to MongoDB (does not wait for the 1.5s poll).
+// Use after create/update/delete so freshly-written data survives a crash or restart.
+async function persist(name) {
+    if (!db || !isLoaded) return;
+    const collections = {
+        users, products, cart_items, orders, coupons,
+        support_tickets, categories, size_guides, reviews,
+        activities, live_activities
+    };
+    const arr = collections[name];
+    if (!arr) return;
+    try {
+        const serialized = JSON.stringify(arr);
+        lastState[name] = serialized; // keep poll loop in sync so it doesn't re-write
+        await saveCollection(name, arr);
+    } catch (err) {
+        console.error(`[Mongo] Error persisting collection '${name}':`, err.message);
     }
 }
 
@@ -541,5 +564,7 @@ module.exports = {
     activities,
     logActivity,
     live_activities,
-    addLiveActivity
+    addLiveActivity,
+    persist,
+    checkAndSync
 };
