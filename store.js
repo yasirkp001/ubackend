@@ -411,19 +411,15 @@ async function initStore() {
         activities, live_activities
     };
 
-    let loadedAny = false;
     if (db) {
         for (const [name, arr] of Object.entries(collections)) {
-            const ok = await loadCollection(name, arr);
-            if (ok) loadedAny = true;
+            await loadCollection(name, arr);
         }
         await loadSettings();
     }
 
-    if (!loadedAny) {
-        console.log('[Mongo] No existing data found in MongoDB or memory-only mode. Seeding default data...');
-        
-        // 1. Seed Admin
+    // 1. Seed Admin if users is empty
+    if (users.length === 0) {
         try {
             const salt = await bcrypt.genSalt(10);
             const passwordHash = await bcrypt.hash('admin123', salt);
@@ -439,15 +435,21 @@ async function initStore() {
                 is_active: 1
             });
             console.log('[In-Memory Store] Seeded default admin user.');
+            if (db) await saveCollection('users', users);
         } catch (e) {
             console.error('Failed to hash admin password:', e.message);
         }
+    }
 
-        // 2. Seed Products
+    // 2. Seed Products if empty
+    if (products.length === 0) {
         SEED_PRODUCTS.forEach(p => products.push({ ...p, images: p.images || [p.image], sizes: p.sizes || ['S', 'M', 'L', 'XL', 'XXL'] }));
         console.log('[In-Memory Store] Seeded default products.');
+        if (db) await saveCollection('products', products);
+    }
 
-        // 3. Seed Coupons
+    // 3. Seed Coupons if empty
+    if (coupons.length === 0) {
         coupons.push({
             id: 1,
             code: 'UCLOSE10',
@@ -475,8 +477,11 @@ async function initStore() {
             category: null
         });
         console.log('[In-Memory Store] Seeded default coupons.');
+        if (db) await saveCollection('coupons', coupons);
+    }
 
-        // 4. Seed Categories
+    // 4. Seed Categories if empty
+    if (categories.length === 0) {
         ['Shirts', 'Outerwear', 'Knitwear', 'Bottoms', 'Accessories'].forEach((cat, idx) => {
             categories.push({
                 id: idx + 1,
@@ -485,8 +490,11 @@ async function initStore() {
             });
         });
         console.log('[In-Memory Store] Seeded default categories.');
+        if (db) await saveCollection('categories', categories);
+    }
 
-        // 5. Seed Size Guides
+    // 5. Seed Size Guides if empty
+    if (size_guides.length === 0) {
         size_guides.push({
             id: 1,
             name: 'Shirts Size Guide',
@@ -514,8 +522,20 @@ async function initStore() {
             ]
         });
         console.log('[In-Memory Store] Seeded default size guides.');
-        
-        // Seed initial live activities
+        if (db) await saveCollection('size_guides', size_guides);
+    }
+
+    // 6. Seed Reviews if empty (the reviews array initially has default 4 items)
+    if (db) {
+        const dbReviewsCount = await db.collection('reviews').countDocuments();
+        if (dbReviewsCount === 0 && reviews.length > 0) {
+            await saveCollection('reviews', reviews);
+            console.log('[Mongo] Seeded default reviews to MongoDB.');
+        }
+    }
+
+    // 7. Seed Live Activities if empty
+    if (live_activities.length === 0) {
         live_activities.push({
             id: 'live-seed-1',
             type: 'system',
@@ -525,15 +545,8 @@ async function initStore() {
             color: '#10b981',
             icon: '⚡'
         });
-
-        // Save everything to MongoDB immediately
-        if (db) {
-            for (const [name, arr] of Object.entries(collections)) {
-                await saveCollection(name, arr);
-            }
-            await saveSettings();
-            console.log('[Mongo] Initial seed data successfully saved to MongoDB Atlas.');
-        }
+        console.log('[In-Memory Store] Seeded default live activities.');
+        if (db) await saveCollection('live_activities', live_activities);
     }
 
     // Set initial lastState values to prevent writing immediately on boot
