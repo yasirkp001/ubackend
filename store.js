@@ -542,6 +542,9 @@ async function initStore() {
     }
     lastState.settings = JSON.stringify(site_settings);
 
+    // Set nextActivityId based on loaded activities to prevent duplicate key errors
+    nextActivityId = activities.length > 0 ? Math.max(...activities.map(a => a.id)) + 1 : 1;
+
     isLoaded = true;
 
     // Start background sync loop every 1500ms
