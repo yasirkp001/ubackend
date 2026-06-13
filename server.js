@@ -32,26 +32,30 @@ app.use(logger);
 // after a response is sent, preventing background setInterval loops from running.
 app.use((req, res, next) => {
     if (req.method !== 'GET') {
-        const originalJson = res.json;
-        const originalSend = res.send;
+        const originalJson = res.json.bind(res);
+        const originalSend = res.send.bind(res);
         let synced = false;
 
-        const triggerSync = () => {
-            if (synced) return;
+        // Flush state to MongoDB and only THEN send the response. The sync must be
+        // awaited (not fire-and-forget): on Render's free tier the CPU is throttled
+        // the moment the response is flushed, so a non-awaited write never completes
+        // and the data is lost on the next restart. Keeping the request open until
+        // the write finishes guarantees persistence.
+        const syncThenSend = (sendFn, body) => {
+            if (synced) return sendFn(body);
             synced = true;
-            store.checkAndSync().catch(err => {
-                console.error('[Sync Middleware] Auto-sync to MongoDB failed:', err.message);
-            });
+            store.checkAndSync()
+                .catch(err => console.error('[Sync Middleware] Auto-sync to MongoDB failed:', err.message))
+                .finally(() => sendFn(body));
+            return res;
         };
 
         res.json = function(body) {
-            triggerSync();
-            return originalJson.call(this, body);
+            return syncThenSend(originalJson, body);
         };
 
         res.send = function(body) {
-            triggerSync();
-            return originalSend.call(this, body);
+            return syncThenSend(originalSend, body);
         };
     }
     next();
