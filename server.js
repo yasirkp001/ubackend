@@ -175,7 +175,7 @@ app.get('/', (req, res) => {
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {
-    res.json({ status: 'healthy', timestamp: new Date() });
+    res.json({ status: 'healthy', timestamp: new Date(), sync: store.syncStatus });
 });
 
 // Global error handler

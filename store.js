@@ -18,6 +18,16 @@ let client = null;
 let lastState = {};
 let isLoaded = false;
 
+// Diagnostics: surfaces whether the last MongoDB write actually succeeded.
+const syncStatus = {
+    buildVersion: 'sync-await-v2',
+    connected: false,
+    lastSyncAt: null,
+    lastSyncOk: null,
+    lastSyncError: null,
+    lastWriteCollection: null
+};
+
 async function connectMongo() {
     const uri = process.env.MONGODB_URI;
     if (!uri) {
@@ -29,6 +39,7 @@ async function connectMongo() {
         client = new MongoClient(uri);
         await client.connect();
         db = client.db('uclose');
+        syncStatus.connected = true;
         console.log('[Mongo] Connected successfully to MongoDB Atlas database: uclose');
     } catch (err) {
         console.error('[Mongo] CRITICAL ERROR: Failed to connect to MongoDB Atlas:', err.message);
@@ -69,7 +80,14 @@ async function saveCollection(name, memoryArray) {
             });
             await db.collection(name).insertMany(cleanArray);
         }
+        syncStatus.lastSyncOk = true;
+        syncStatus.lastSyncAt = new Date().toISOString();
+        syncStatus.lastWriteCollection = name;
+        syncStatus.lastSyncError = null;
     } catch (err) {
+        syncStatus.lastSyncOk = false;
+        syncStatus.lastSyncAt = new Date().toISOString();
+        syncStatus.lastSyncError = err.message;
         console.error(`[Mongo] Error saving collection '${name}':`, err.message);
     }
 }
@@ -582,5 +600,6 @@ module.exports = {
     live_activities,
     addLiveActivity,
     persist,
-    checkAndSync
+    checkAndSync,
+    syncStatus
 };
