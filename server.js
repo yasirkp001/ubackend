@@ -99,6 +99,30 @@ app.use((req, res, next) => {
     next();
 });
 
+// Serve uploads dynamically from MongoDB if available, falling back to local files
+app.get('/uploads/:filename', async (req, res, next) => {
+    try {
+        const db = store.getDb();
+        if (db) {
+            const file = await db.collection('media').findOne({ filename: req.params.filename });
+            if (file) {
+                res.setHeader('Content-Type', file.contentType || 'image/jpeg');
+                res.setHeader('Cache-Control', 'public, max-age=31536000');
+                
+                let buffer = file.data;
+                if (file.data && file.data.buffer) {
+                    buffer = file.data.buffer;
+                }
+                return res.send(buffer);
+            }
+        }
+        next();
+    } catch (err) {
+        console.error('Error fetching media from database:', err.message);
+        next();
+    }
+});
+
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // Routes

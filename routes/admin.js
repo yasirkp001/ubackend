@@ -10,22 +10,10 @@ const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 
-// Ensure uploads directory exists
 const uploadsDir = path.join(__dirname, '../uploads');
-if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-}
 
-// Multer Storage Configuration
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, uploadsDir);
-    },
-    filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        cb(null, uniqueSuffix + path.extname(file.originalname));
-    }
-});
+// Multer Storage Configuration (In-Memory Buffer)
+const storage = multer.memoryStorage();
 
 const upload = multer({ 
     storage,
@@ -48,7 +36,7 @@ router.use(adminMiddleware);
 
 // 0. Upload Image Endpoint
 router.post('/upload', (req, res, next) => {
-    upload.single('image')(req, res, (err) => {
+    upload.single('image')(req, res, async (err) => {
         if (err instanceof multer.MulterError) {
             return res.status(400).json({ message: `Upload error: ${err.message}` });
         } else if (err) {
@@ -59,8 +47,33 @@ router.post('/upload', (req, res, next) => {
             return res.status(400).json({ message: 'No file uploaded.' });
         }
         
-        const imageUrl = `/uploads/${req.file.filename}`;
-        res.json({ imageUrl });
+        try {
+            const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+            const filename = uniqueSuffix + path.extname(req.file.originalname);
+            const db = store.getDb();
+            
+            if (db) {
+                // Save to MongoDB collection 'media'
+                await db.collection('media').insertOne({
+                    filename,
+                    contentType: req.file.mimetype,
+                    data: req.file.buffer,
+                    size: req.file.size,
+                    created_at: new Date()
+                });
+            } else {
+                // Fallback to disk if db not available
+                if (!fs.existsSync(uploadsDir)) {
+                    fs.mkdirSync(uploadsDir, { recursive: true });
+                }
+                fs.writeFileSync(path.join(uploadsDir, filename), req.file.buffer);
+            }
+            
+            const imageUrl = `/uploads/${filename}`;
+            res.json({ imageUrl });
+        } catch (uploadErr) {
+            res.status(500).json({ message: 'Failed to save media', error: uploadErr.message });
+        }
     });
 });
 
@@ -905,45 +918,75 @@ router.get('/order-stream', (req, res) => {
 });
 
 // 19. Get List of Uploaded Media Assets (Admin only)
-router.get('/media', (req, res) => {
+router.get('/media', async (req, res) => {
     try {
-        if (!fs.existsSync(uploadsDir)) {
-            return res.json([]);
+        const mediaList = [];
+        
+        // 1. Load from MongoDB if available
+        const db = store.getDb();
+        if (db) {
+            const dbMedia = await db.collection('media').find({}).toArray();
+            dbMedia.forEach(item => {
+                mediaList.push({
+                    filename: item.filename,
+                    url: `/uploads/${item.filename}`,
+                    size: item.size || (item.data ? item.data.length : 0),
+                    created_at: item.created_at || new Date()
+                });
+            });
         }
-        const files = fs.readdirSync(uploadsDir);
-        const mediaList = files
-            .filter(file => !file.startsWith('.'))
-            .map(file => {
-                const filePath = path.join(uploadsDir, file);
-                const stats = fs.statSync(filePath);
-                return {
-                    filename: file,
-                    url: `/uploads/${file}`,
-                    size: stats.size,
-                    created_at: stats.mtime
-                };
-            })
-            .sort((a, b) => b.created_at - a.created_at);
+        
+        // 2. Load from local disk (for existing/seeded files)
+        if (fs.existsSync(uploadsDir)) {
+            const files = fs.readdirSync(uploadsDir);
+            files.forEach(file => {
+                if (!file.startsWith('.') && !mediaList.some(m => m.filename === file)) {
+                    const filePath = path.join(uploadsDir, file);
+                    const stats = fs.statSync(filePath);
+                    mediaList.push({
+                        filename: file,
+                        url: `/uploads/${file}`,
+                        size: stats.size,
+                        created_at: stats.mtime
+                    });
+                }
+            });
+        }
+        
+        // Sort descending by created_at
+        mediaList.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
         res.json(mediaList);
     } catch (err) {
-        res.status(500).json({ message: 'Failed to read media directory', error: err.message });
+        res.status(500).json({ message: 'Failed to read media', error: err.message });
     }
 });
 
 // 20. Delete an Uploaded Media Asset (Admin only)
-router.delete('/media/:filename', (req, res) => {
+router.delete('/media/:filename', async (req, res) => {
     try {
         const filename = req.params.filename;
-        const filePath = path.join(uploadsDir, filename);
+        let deleted = false;
 
-        // Security check: prevent directory traversal
-        const resolvedPath = path.resolve(filePath);
-        if (!resolvedPath.startsWith(path.resolve(uploadsDir))) {
-            return res.status(403).json({ message: 'Forbidden access path.' });
+        // 1. Delete from MongoDB
+        const db = store.getDb();
+        if (db) {
+            const result = await db.collection('media').deleteOne({ filename });
+            if (result.deletedCount > 0) {
+                deleted = true;
+            }
         }
 
-        if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
+        // 2. Delete from disk if it exists
+        const filePath = path.join(uploadsDir, filename);
+        const resolvedPath = path.resolve(filePath);
+        if (resolvedPath.startsWith(path.resolve(uploadsDir))) {
+            if (fs.existsSync(filePath)) {
+                fs.unlinkSync(filePath);
+                deleted = true;
+            }
+        }
+
+        if (deleted) {
             res.json({ message: 'Media file deleted successfully.' });
         } else {
             res.status(404).json({ message: 'Media file not found.' });

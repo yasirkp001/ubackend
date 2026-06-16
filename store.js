@@ -31,8 +31,8 @@ const syncStatus = {
 async function connectMongo() {
     const uri = process.env.MONGODB_URI;
     if (!uri) {
-        console.error('[Mongo] CRITICAL ERROR: MONGODB_URI not found in environment variables. Process terminated.');
-        process.exit(1);
+        console.warn('[Mongo] WARNING: MONGODB_URI not found in environment variables. Running in in-memory mode.');
+        return;
     }
     try {
         console.log('[Mongo] Connecting to MongoDB Atlas...');
@@ -41,10 +41,31 @@ async function connectMongo() {
         db = client.db('uclose');
         syncStatus.connected = true;
         console.log('[Mongo] Connected successfully to MongoDB Atlas database: uclose');
+
+        // If connection occurs after store is fully loaded, pull the collection data
+        if (isLoaded) {
+            const collections = {
+                users, products, cart_items, orders, coupons,
+                support_tickets, categories, size_guides, reviews,
+                activities, live_activities
+            };
+            for (const [name, arr] of Object.entries(collections)) {
+                await loadCollection(name, arr);
+            }
+            await loadSettings();
+            
+            // Re-set initial lastState values to prevent writing immediately on boot
+            for (const [name, arr] of Object.entries(collections)) {
+                lastState[name] = JSON.stringify(arr);
+            }
+            lastState.settings = JSON.stringify(site_settings);
+            console.log('[Mongo] Successfully refreshed memory stores from MongoDB connection.');
+        }
     } catch (err) {
-        console.error('[Mongo] CRITICAL ERROR: Failed to connect to MongoDB Atlas:', err.message);
+        console.error('[Mongo] ERROR: Failed to connect to MongoDB Atlas:', err.message);
         console.error('[Mongo] Please verify your MONGODB_URI and your IP Access List (Whitelist) in MongoDB Atlas.');
-        process.exit(1);
+        console.log('[Mongo] Continuing in in-memory mode. Will retry connection in 10 seconds.');
+        setTimeout(connectMongo, 10000);
     }
 }
 
@@ -582,6 +603,10 @@ async function initStore() {
     setInterval(checkAndSync, 1500);
 }
 
+function getDb() {
+    return db;
+}
+
 initStore();
 
 module.exports = {
@@ -601,5 +626,6 @@ module.exports = {
     addLiveActivity,
     persist,
     checkAndSync,
-    syncStatus
+    syncStatus,
+    getDb
 };

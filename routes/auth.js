@@ -331,6 +331,7 @@ router.put('/change-password', authMiddleware, async (req, res) => {
 
         const salt = await bcrypt.genSalt(10);
         user.password_hash = await bcrypt.hash(new_password, salt);
+        await store.persist('users');
 
         // Save to backend live activities store
         store.addLiveActivity(

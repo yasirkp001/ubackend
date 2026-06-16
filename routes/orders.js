@@ -233,13 +233,31 @@ router.put('/:id/return', (req, res) => {
         return res.status(404).json({ message: 'Order not found.' });
     }
 
-    // Only allow returns for Delivered orders
-    if (order.status !== 'Delivered') {
-        return res.status(400).json({ message: 'Only delivered orders can be returned.' });
+    // Only allow returns for Delivered or Confirmed orders
+    if (order.status !== 'Delivered' && order.status !== 'Confirmed') {
+        return res.status(400).json({ message: 'Only delivered or confirmed orders can be returned.' });
     }
 
+    const { refundMethod, reason, bankDetails } = req.body;
+
     order.status = "Return Requested";
-    res.json({ message: 'Return requested successfully.', status: 'Return Requested' });
+    order.returnDetails = {
+        refundMethod: refundMethod || 'wallet',
+        reason: reason || 'Not specified',
+        bankDetails: refundMethod === 'bank' ? bankDetails : null,
+        date: new Date().toISOString()
+    };
+    
+    // Trigger immediate persist
+    if (typeof store.persist === 'function') {
+        store.persist('orders');
+    }
+
+    res.json({ 
+        message: 'Return requested successfully.', 
+        status: 'Return Requested',
+        returnDetails: order.returnDetails
+    });
 });
 
 module.exports = router;
